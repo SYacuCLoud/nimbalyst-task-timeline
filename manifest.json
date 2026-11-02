@@ -1,0 +1,25 @@
+{
+  "id": "com.plm.task-timeline",
+  "name": "Task Timeline",
+  "version": "0.1.0",
+  "description": "Gantt-style timeline of tracker items using startDate / dueDate (milestones use targetDate).",
+  "author": "PLM",
+  "main": "dist/index.js",
+  "styles": "dist/index.css",
+  "apiVersion": "1.0.0",
+  "permissions": {
+    "catalog": ["nimbalyst-database-read"]
+  },
+  "contributions": {
+    "panels": [
+      {
+        "id": "timeline",
+        "title": "Timeline",
+        "icon": "view_timeline",
+        "placement": "fullscreen",
+        "order": 56,
+        "tooltip": "Task timeline (Gantt) by start date and due date"
+      }
+    ]
+  }
+}

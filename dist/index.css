@@ -1,0 +1,216 @@
+.tt-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  background: var(--nim-bg);
+  color: var(--nim-text);
+  font-size: 13px;
+  overflow: hidden;
+}
+
+/* toolbar */
+.tt-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--nim-border);
+  background: var(--nim-bg-secondary);
+  flex-wrap: wrap;
+}
+.tt-title { font-size: 14px; margin-right: 6px; }
+.tt-spacer { flex: 1; }
+.tt-count { color: var(--nim-text-muted); }
+.tt-seg { display: inline-flex; border: 1px solid var(--nim-border); border-radius: 6px; overflow: hidden; }
+.tt-seg button,
+.tt-btn {
+  background: var(--nim-bg);
+  color: var(--nim-text);
+  border: none;
+  padding: 4px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+.tt-seg button + button { border-left: 1px solid var(--nim-border); }
+.tt-seg button.on { background: var(--nim-primary); color: #fff; }
+.tt-btn { border: 1px solid var(--nim-border); border-radius: 6px; }
+.tt-btn:hover, .tt-seg button:hover:not(.on) { background: var(--nim-bg-hover); }
+.tt-field, .tt-check { display: inline-flex; align-items: center; gap: 6px; color: var(--nim-text-muted); }
+.tt-field select {
+  background: var(--nim-bg);
+  color: var(--nim-text);
+  border: 1px solid var(--nim-border);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font: inherit;
+}
+
+.tt-msg { padding: 24px; color: var(--nim-text-muted); }
+.tt-err { color: var(--nim-error); }
+.tt-hint {
+  padding: 6px 12px;
+  color: var(--nim-text-muted);
+  background: var(--nim-bg-tertiary);
+  border-bottom: 1px solid var(--nim-border);
+}
+
+/* scroll canvas */
+.tt-scroll { flex: 1; overflow: auto; position: relative; }
+.tt-canvas { position: relative; }
+
+.tt-header {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  height: 48px;
+  background: var(--nim-bg-secondary);
+  border-bottom: 1px solid var(--nim-border);
+}
+.tt-scale { position: relative; height: 48px; }
+.tt-tick-top,
+.tt-tick-bottom {
+  position: absolute;
+  box-sizing: border-box;
+  border-left: 1px solid var(--nim-border);
+  white-space: nowrap;
+  overflow: hidden;
+  padding-left: 4px;
+}
+.tt-tick-top { top: 0; height: 24px; line-height: 24px; font-weight: 600; }
+.tt-tick-bottom {
+  top: 24px;
+  height: 24px;
+  line-height: 24px;
+  color: var(--nim-text-muted);
+  font-size: 11px;
+}
+.tt-tick-bottom small { margin-left: 2px; color: var(--nim-text-faint); font-size: 10px; }
+.tt-tick-bottom.weekend { color: var(--nim-text-faint); }
+
+/* rows */
+.tt-row {
+  display: flex;
+  height: 32px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--nim-border);
+}
+.tt-row:hover .tt-left,
+.tt-row:hover .tt-lane { background: var(--nim-bg-hover); }
+.tt-left {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  flex: 0 0 300px;
+  width: 300px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  background: var(--nim-bg);
+  border-right: 1px solid var(--nim-border);
+  overflow: hidden;
+}
+.tt-left-head {
+  background: var(--nim-bg-secondary);
+  justify-content: space-between;
+  font-weight: 600;
+  color: var(--nim-text-muted);
+  height: 48px;
+}
+.tt-group .tt-left { background: var(--nim-bg-tertiary); font-weight: 600; }
+.tt-group .tt-lane { background: var(--nim-bg-tertiary); }
+.tt-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--nim-bg-selected);
+  color: var(--nim-text-muted);
+}
+.tt-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; }
+.tt-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tt-name.closed { color: var(--nim-text-muted); text-decoration: line-through; }
+.tt-owner {
+  font-size: 11px;
+  color: var(--nim-text-muted);
+  background: var(--nim-bg-tertiary);
+  border-radius: 8px;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+.tt-dates-col { font-size: 11px; color: var(--nim-text-faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tt-dates-col.overdue { color: var(--nim-error); font-weight: 600; }
+
+.tt-lane { position: relative; height: 31px; }
+
+.tt-bar {
+  position: absolute;
+  top: 7px;
+  height: 18px;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+  z-index: 2;
+}
+.tt-bar.closed { opacity: 0.55; }
+.tt-bar.partial {
+  background-image: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.25) 0 4px, transparent 4px 8px);
+}
+.tt-bar.overdue { outline: 2px solid var(--nim-error); outline-offset: 1px; }
+.tt-bar-label {
+  position: absolute;
+  top: 0;
+  line-height: 31px;
+  font-size: 11px;
+  color: var(--nim-text-muted);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.tt-diamond {
+  position: absolute;
+  top: 9px;
+  width: 14px;
+  height: 14px;
+  transform: rotate(45deg);
+  border-radius: 2px;
+  box-shadow: 0 0 0 2px var(--nim-bg);
+  z-index: 2;
+}
+
+/* overlay */
+.tt-overlay { position: absolute; z-index: 1; pointer-events: none; overflow: visible; }
+.tt-weekend { fill: var(--nim-text); opacity: 0.04; }
+.tt-today { stroke: var(--nim-error); stroke-width: 2; stroke-dasharray: 4 3; }
+.tt-arrow { fill: none; stroke: var(--nim-text-muted); stroke-width: 1.5; }
+.tt-arrow-late { stroke: var(--nim-error); }
+.tt-arrowhead { fill: var(--nim-text-muted); }
+.tt-arrowhead-late { fill: var(--nim-error); }
+
+/* legend */
+.tt-legend {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 6px 12px;
+  border-top: 1px solid var(--nim-border);
+  background: var(--nim-bg-secondary);
+  color: var(--nim-text-muted);
+  font-size: 11px;
+}
+.tt-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.tt-legend i { display: inline-block; width: 14px; height: 8px; border-radius: 2px; }
+.tt-legend i.lg-overdue { outline: 2px solid var(--nim-error); background: #94a3b8; }
+.tt-legend i.lg-partial {
+  background: #3b82f6 repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.35) 0 3px, transparent 3px 6px);
+}
+.tt-legend i.lg-today { width: 0; height: 12px; border-left: 2px dashed var(--nim-error); border-radius: 0; }
