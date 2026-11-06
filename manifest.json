@@ -1,9 +1,9 @@
 {
-  "id": "com.plm.task-timeline",
+  "id": "com.syacucloud.task-timeline",
   "name": "Task Timeline",
   "version": "0.1.0",
   "description": "Gantt-style timeline of tracker items using startDate / dueDate (milestones use targetDate).",
-  "author": "PLM",
+  "author": "SYacuCLoud",
   "main": "dist/index.js",
   "styles": "dist/index.css",
   "apiVersion": "1.0.0",
