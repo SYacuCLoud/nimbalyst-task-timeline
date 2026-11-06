@@ -66,6 +66,97 @@ function ownerName(o) {
   return o.displayName || o.name || o.email || "";
 }
 
+// ---------- tracker write bridge ----------
+// The extension SDK only exposes reads (host.data.query). Creating items uses
+// the renderer IPC that Nimbalyst's own tracker UI uses. It is internal and
+// may change between app versions, so every call checks it exists first.
+function electronApi() {
+  const api = typeof window !== "undefined" ? window.electronAPI : null;
+  return api && typeof api.invoke === "function" ? api : null;
+}
+function canCreateItems() {
+  return typeof electronApi()?.documentService?.createTrackerItem === "function";
+}
+
+const FALLBACK_TYPES = [
+  {
+    type: "task",
+    displayName: "Task",
+    idPrefix: "tsk",
+    defaultStatus: "to-do",
+    startField: "startDate",
+    dueField: "dueDate",
+    priorities: ["low", "medium", "high", "critical"],
+    defaultPriority: "medium",
+  },
+];
+
+function toTypeInfo(m) {
+  const byRole = (role, fallback) => {
+    const name = m.roles?.[role] ?? fallback;
+    return (m.fields || []).find((f) => f.name === name);
+  };
+  const dateName = (f) => (f && (f.type === "date" || f.type === "datetime") ? f.name : null);
+  const status = byRole("workflowStatus", "status");
+  const priority = byRole("priority", "priority");
+  return {
+    type: m.type,
+    displayName: m.displayName || m.type,
+    idPrefix: m.idPrefix || m.type.slice(0, 3),
+    creatable: m.creatable !== false,
+    defaultStatus: typeof status?.default === "string" ? status.default : status?.options?.[0]?.value,
+    startField: dateName(byRole("startDate", "startDate")),
+    dueField: dateName(byRole("dueDate", "dueDate")),
+    priorities: (priority?.options || []).map((o) => o.value),
+    defaultPriority: typeof priority?.default === "string" ? priority.default : undefined,
+  };
+}
+
+async function loadCreatableTypes() {
+  const api = electronApi();
+  if (!api) return FALLBACK_TYPES;
+  try {
+    const raw = await api.invoke("tracker-schema:get-all");
+    if (!Array.isArray(raw)) return FALLBACK_TYPES;
+    const types = raw
+      .filter((m) => m && typeof m.type === "string")
+      .map(toTypeInfo)
+      .filter((t) => t.creatable && (t.startField || t.dueField));
+    return types.length ? types : FALLBACK_TYPES;
+  } catch {
+    return FALLBACK_TYPES;
+  }
+}
+
+function newItemId(prefix) {
+  const rand = Math.random().toString(36).slice(2, 8).padEnd(6, "0");
+  return `${prefix}_${Date.now().toString(36)}${rand}`;
+}
+
+async function createItem(host, typeInfo, input) {
+  const ds = electronApi()?.documentService;
+  if (!ds?.createTrackerItem) throw new Error("이 Nimbalyst 버전에서는 항목을 만들 수 없습니다.");
+  const customFields = {};
+  if (input.start && typeInfo.startField) customFields[typeInfo.startField] = input.start;
+  if (input.due && typeInfo.dueField) customFields[typeInfo.dueField] = input.due;
+  const id = newItemId(typeInfo.idPrefix);
+  const result = await ds.createTrackerItem({
+    id,
+    type: typeInfo.type,
+    title: input.title.trim(),
+    status: typeInfo.defaultStatus,
+    priority: input.priority || undefined,
+    workspace: host.workspacePath,
+    customFields,
+  });
+  if (result && result.success === false) throw new Error(result.error || "항목 생성에 실패했습니다.");
+  return result?.item?.id || id;
+}
+
+function openTrackerItem(itemId) {
+  window.dispatchEvent(new CustomEvent("nimbalyst:navigate-tracker-item", { detail: { itemId } }));
+}
+
 // ---------- data ----------
 async function loadData(host) {
   const ws = host.workspacePath;
@@ -106,6 +197,7 @@ async function loadData(host) {
       start,
       due,
       isMilestone,
+      byAgent: d.createdByAgent === true,
     });
   }
   const deps = rels.map((r) => ({ from: r.target_item_id, to: r.source_item_id }));
@@ -164,8 +256,38 @@ function TimelinePanel({ host }) {
   const [typeFilter, setTypeFilter] = useState("task");
   const [showClosed, setShowClosed] = useState(true);
   const [showUndated, setShowUndated] = useState(true);
+  const [showAgent, setShowAgent] = useState(true);
   const scrollRef = useRef(null);
   const didScroll = useRef(false);
+  const titleRef = useRef(null);
+  const canCreate = canCreateItems();
+  const [createTypes, setCreateTypes] = useState(FALLBACK_TYPES);
+  const [form, setForm] = useState(null); // { title, type, start, due, priority, saving, error }
+  const [drag, setDrag] = useState(null); // { a, b } day offsets from origin
+
+  useEffect(() => {
+    if (canCreate) loadCreatableTypes().then(setCreateTypes);
+  }, [canCreate]);
+
+  const openForm = useCallback(
+    (preset = {}) => {
+      const t = createTypes.find((x) => x.type === (preset.type || "task")) || createTypes[0];
+      setForm({
+        title: "",
+        type: t.type,
+        start: preset.start || "",
+        due: preset.due || "",
+        priority: t.defaultPriority || "",
+        saving: false,
+        error: null,
+      });
+    },
+    [createTypes]
+  );
+
+  useEffect(() => {
+    if (form && !form.saving) titleRef.current?.focus();
+  }, [form?.type, !!form]);
 
   const refresh = useCallback(async () => {
     if (!host?.data?.query) {
@@ -189,6 +311,27 @@ function TimelinePanel({ host }) {
     return () => clearInterval(t);
   }, [refresh]);
 
+  const submitForm = useCallback(
+    async (e) => {
+      e?.preventDefault?.();
+      if (!form || form.saving) return;
+      const typeInfo = createTypes.find((x) => x.type === form.type) || createTypes[0];
+      if (!form.title.trim()) return setForm({ ...form, error: "제목을 입력해 주세요." });
+      if (form.start && form.due && form.due < form.start)
+        return setForm({ ...form, error: "마감일이 시작일보다 빠릅니다." });
+      setForm({ ...form, saving: true, error: null });
+      try {
+        await createItem(host, typeInfo, form);
+        await refresh();
+        // keep the form open with the same dates so several items can be added in a row
+        setForm((f) => f && { ...f, title: "", saving: false, error: null });
+      } catch (err) {
+        setForm((f) => f && { ...f, saving: false, error: String(err?.message || err) });
+      }
+    },
+    [form, createTypes, host, refresh]
+  );
+
   const types = useMemo(() => Array.from(new Set(data.items.map((i) => i.type))).sort(), [data]);
 
   const visible = useMemo(
@@ -196,9 +339,10 @@ function TimelinePanel({ host }) {
       data.items.filter((i) => {
         if (typeFilter !== "all" && i.type !== typeFilter && !(typeFilter === "task" && i.isMilestone)) return false;
         if (!showClosed && CLOSED.has(i.status)) return false;
+        if (!showAgent && i.byAgent) return false;
         return true;
       }),
-    [data, typeFilter, showClosed]
+    [data, typeFilter, showClosed, showAgent]
   );
 
   const dated = visible.filter((i) => i.start || i.due);
@@ -270,6 +414,45 @@ function TimelinePanel({ host }) {
     return { x: x1, w: Math.max(x2 - x1, 6), partial: !i.start || !i.due };
   };
 
+  // drag on the "add" lane to pick a date range for a new item
+  const dragLane = useRef(null);
+  const dayAt = (clientX) => {
+    const r = dragLane.current?.getBoundingClientRect();
+    if (!r) return 0;
+    return Math.max(0, Math.min(days - 1, Math.floor((clientX - r.left) / px)));
+  };
+  const dragRef = useRef(null);
+  const updateDrag = (g) => {
+    dragRef.current = g;
+    setDrag(g);
+  };
+  const onAddLaneDown = (e) => {
+    if (e.button !== 0) return;
+    dragLane.current = e.currentTarget;
+    const d = dayAt(e.clientX);
+    updateDrag({ a: d, b: d });
+    e.preventDefault();
+  };
+  useEffect(() => {
+    if (!drag) return;
+    const move = (e) => dragRef.current && updateDrag({ ...dragRef.current, b: dayAt(e.clientX) });
+    const up = () => {
+      const g = dragRef.current;
+      updateDrag(null);
+      if (!g) return;
+      const lo = Math.min(g.a, g.b), hi = Math.max(g.a, g.b);
+      const start = fmtFull(addDays(origin, lo)), due = fmtFull(addDays(origin, hi));
+      if (form) setForm({ ...form, start, due, error: null });
+      else openForm({ start, due });
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    return () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+  }, [!!drag, origin, px, days, form, openForm]);
+
   const rowIndex = new Map();
   rows.forEach((r, idx) => r.kind === "item" && rowIndex.set(r.item.id, idx));
 
@@ -321,6 +504,7 @@ function TimelinePanel({ host }) {
     "div",
     { className: "tt-toolbar" },
     h("strong", { className: "tt-title" }, "Timeline"),
+    canCreate ? h("button", { className: "tt-btn tt-primary", onClick: () => (form ? setForm(null) : openForm()) }, form ? "닫기" : "+ 새 항목") : null,
     h(
       "div",
       { className: "tt-seg" },
@@ -356,11 +540,70 @@ function TimelinePanel({ host }) {
       )
     ),
     h("label", { className: "tt-check" }, h("input", { type: "checkbox", checked: showClosed, onChange: (e) => setShowClosed(e.target.checked) }), "완료 포함"),
+    h("label", { className: "tt-check" }, h("input", { type: "checkbox", checked: showAgent, onChange: (e) => setShowAgent(e.target.checked) }), "에이전트 작업"),
     h("label", { className: "tt-check" }, h("input", { type: "checkbox", checked: showUndated, onChange: (e) => setShowUndated(e.target.checked) }), "날짜 미지정 표시"),
     h("span", { className: "tt-spacer" }),
     h("span", { className: "tt-count" }, `${dated.length}개 일정 · ${undated.length}개 미지정`),
     h("button", { className: "tt-btn", onClick: refresh, title: "새로고침" }, "↻")
   );
+
+  const formType = form && (createTypes.find((x) => x.type === form.type) || createTypes[0]);
+  const formBar = form
+    ? h(
+        "form",
+        {
+          className: "tt-form",
+          onSubmit: submitForm,
+          onKeyDown: (e) => e.key === "Escape" && setForm(null),
+        },
+        h(
+          "select",
+          {
+            value: form.type,
+            disabled: form.saving,
+            onChange: (e) => {
+              const t = createTypes.find((x) => x.type === e.target.value);
+              setForm({ ...form, type: e.target.value, priority: t?.defaultPriority || "" });
+            },
+          },
+          createTypes.map((t) => h("option", { key: t.type, value: t.type }, t.displayName))
+        ),
+        h("input", {
+          ref: titleRef,
+          className: "tt-form-title",
+          placeholder: "제목 (Enter로 추가, Esc로 닫기)",
+          value: form.title,
+          disabled: form.saving,
+          onChange: (e) => setForm({ ...form, title: e.target.value, error: null }),
+        }),
+        formType?.startField
+          ? h(
+              "label",
+              { className: "tt-field" },
+              "시작",
+              h("input", { type: "date", value: form.start, disabled: form.saving, onChange: (e) => setForm({ ...form, start: e.target.value, error: null }) })
+            )
+          : null,
+        formType?.dueField
+          ? h(
+              "label",
+              { className: "tt-field" },
+              formType.dueField === "dueDate" ? "마감" : "목표",
+              h("input", { type: "date", value: form.due, disabled: form.saving, onChange: (e) => setForm({ ...form, due: e.target.value, error: null }) })
+            )
+          : null,
+        formType?.priorities?.length
+          ? h(
+              "select",
+              { value: form.priority, disabled: form.saving, onChange: (e) => setForm({ ...form, priority: e.target.value }) },
+              h("option", { value: "" }, "우선순위 없음"),
+              formType.priorities.map((p) => h("option", { key: p, value: p }, p))
+            )
+          : null,
+        h("button", { type: "submit", className: "tt-btn tt-primary", disabled: form.saving }, form.saving ? "추가 중…" : "추가"),
+        form.error ? h("span", { className: "tt-form-err" }, form.error) : h("span", { className: "tt-form-hint" }, "타임라인 맨 아래 줄을 드래그해도 기간이 채워집니다")
+      )
+    : null;
 
   if (error) return h("div", { className: "tt-root" }, toolbar, h("div", { className: "tt-msg tt-err" }, error));
   if (loading) return h("div", { className: "tt-root" }, toolbar, h("div", { className: "tt-msg" }, "불러오는 중…"));
@@ -399,9 +642,10 @@ function TimelinePanel({ host }) {
     const overdue = !closed && i.due && i.due < now;
     const g = barGeom(i);
     const tip = `${i.title}\n상태: ${st.label}${i.owner ? `\n담당: ${i.owner}` : ""}${i.priority ? `\n우선순위: ${i.priority}` : ""}\n시작: ${fmtFull(i.start)}\n마감: ${fmtFull(i.due)}${overdue ? "\n⚠ 마감 지남" : ""}`;
+    const open = () => openTrackerItem(i.id);
     let bar = null;
     if (g?.milestone) {
-      bar = h("div", { className: "tt-diamond", style: { left: g.x - 7, background: st.color }, title: tip });
+      bar = h("div", { className: "tt-diamond", style: { left: g.x - 7, background: st.color }, title: tip, onClick: open });
     } else if (g) {
       bar = h(
         "div",
@@ -410,6 +654,7 @@ function TimelinePanel({ host }) {
           className: "tt-bar" + (closed ? " closed" : "") + (overdue ? " overdue" : "") + (g.partial ? " partial" : ""),
           style: { left: g.x, width: g.w, background: st.color },
           title: tip,
+          onClick: open,
         },
         g.w > 60 ? h("span", null, i.title) : null
       );
@@ -420,7 +665,7 @@ function TimelinePanel({ host }) {
       { key: i.id, className: "tt-row", style: { width: LEFT + width } },
       h(
         "div",
-        { className: "tt-left", title: tip },
+        { className: "tt-left tt-clickable", title: tip + "\n(클릭해서 열기)", onClick: open },
         h("span", { className: "tt-dot", style: { background: st.color } }),
         h("span", { className: "tt-name" + (closed ? " closed" : "") }, i.isMilestone ? "◆ " + i.title : i.title),
         i.owner ? h("span", { className: "tt-owner" }, i.owner) : null,
@@ -449,22 +694,42 @@ function TimelinePanel({ host }) {
     arrows
   );
 
+  const ghost = drag
+    ? h("div", {
+        className: "tt-ghost",
+        style: { left: Math.min(drag.a, drag.b) * px, width: (Math.abs(drag.b - drag.a) + 1) * px },
+      }, `${fmt(addDays(origin, Math.min(drag.a, drag.b)))} → ${fmt(addDays(origin, Math.max(drag.a, drag.b)))}`)
+    : null;
+  const addRow = canCreate
+    ? h(
+        "div",
+        { className: "tt-row tt-addrow", style: { width: LEFT + width } },
+        h("div", { className: "tt-left tt-clickable", onClick: () => openForm() }, "+ 드래그해서 새 항목 추가"),
+        h("div", { className: "tt-lane", style: { width }, onMouseDown: onAddLaneDown, title: "드래그해서 기간을 고르면 새 항목 입력창이 열립니다" }, ghost)
+      )
+    : null;
+
   const empty =
-    rows.length === 0
-      ? h("div", { className: "tt-msg" }, "표시할 항목이 없습니다. Task에 Start Date / Due Date를 입력하면 여기에 막대로 나타납니다.")
-      : dated.length === 0
-      ? h("div", { className: "tt-hint" }, "아직 날짜가 입력된 항목이 없습니다. Task의 Start Date / Due Date를 채우면 타임라인에 표시됩니다.")
+    dated.length === 0
+      ? h(
+          "div",
+          { className: "tt-hint" },
+          canCreate
+            ? "아직 날짜가 입력된 항목이 없습니다. '+ 새 항목'을 누르거나 맨 아래 줄을 드래그해서 추가해 보세요."
+            : "아직 날짜가 입력된 항목이 없습니다. Task의 Start Date / Due Date를 채우면 타임라인에 표시됩니다."
+        )
       : null;
 
   return h(
     "div",
     { className: "tt-root" },
     toolbar,
+    formBar,
     empty,
     h(
       "div",
       { className: "tt-scroll", ref: scrollRef },
-      h("div", { className: "tt-canvas", style: { width: LEFT + width, height: HEADER + bodyHeight } }, header, h("div", { className: "tt-body" }, rowEls), overlay)
+      h("div", { className: "tt-canvas", style: { width: LEFT + width, height: HEADER + bodyHeight + (addRow ? ROW : 0) } }, header, h("div", { className: "tt-body" }, rowEls, addRow), overlay)
     ),
     h(
       "div",
