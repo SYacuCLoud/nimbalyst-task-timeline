@@ -154,7 +154,17 @@ async function createItem(host, typeInfo, input) {
 }
 
 function openTrackerItem(itemId) {
-  window.dispatchEvent(new CustomEvent("nimbalyst:navigate-tracker-item", { detail: { itemId } }));
+  // Nimbalyst opens the item inside the session view when the mode behind this fullscreen panel is "agent",
+  // and panels have no mode API, so press the app's Ctrl/Cmd+T (leave panel, switch to tracker mode) first.
+  const mac = /Mac/.test(navigator.platform);
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "t", ctrlKey: !mac, metaKey: mac }));
+  // The navigate handler reads the mode from a ref set in an effect, so wait for the panel to unmount plus a frame.
+  let tries = 0;
+  const go = () => {
+    if (document.querySelector('[data-layout="extension-panel-fullscreen"]') && ++tries < 60) return requestAnimationFrame(go);
+    requestAnimationFrame(() => window.dispatchEvent(new CustomEvent("nimbalyst:navigate-tracker-item", { detail: { itemId } })));
+  };
+  requestAnimationFrame(go);
 }
 
 // ---------- data ----------
